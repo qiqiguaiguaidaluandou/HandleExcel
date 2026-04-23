@@ -1,0 +1,64 @@
+# 开发模式 compose（默认）
+# 用法：
+#   docker compose up              # 前后端同时起，支持热更新
+#   docker compose up backend      # 只起后端
+#   docker compose down
+#
+# 特点：
+# - 源码 bind mount 进容器，保存即热更新
+# - backend 挂宿主 docker.sock，用于每次 /execute 通过 `docker run` 起 executor 兄弟容器
+# - DATA_DIR 统一到 backend/data/，宿主和容器双向可见
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: dev
+    image: handleexcel-backend:dev
+    container_name: handleexcel-backend
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./backend/.env
+    environment:
+      # 容器内视角的数据目录
+      DATA_DIR: /data
+      # 宿主视角的数据目录（executor 兄弟容器 -v 参数要用，docker daemon 解析的是宿主路径）
+      HOST_DATA_DIR: ${PWD}/backend/data
+      EXECUTOR_IMAGE: handleexcel-executor:latest
+    volumes:
+      # 源码 bind mount（dev 热更新）
+      - ./backend/app:/app/app
+      - ./backend/migrate_paths.py:/app/migrate_paths.py:ro
+      # 数据持久化
+      - ./backend/data:/data
+      # docker socket：后端用它起 executor 兄弟容器
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    image: handleexcel-frontend:dev
+    container_name: handleexcel-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      # 浏览器里跑的代码直连后端，这里是浏览器视角（宿主）
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8002}
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/next.config.ts:/app/next.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/eslint.config.mjs:/app/eslint.config.mjs
+      - ./frontend/postcss.config.mjs:/app/postcss.config.mjs
+      - ./frontend/package.json:/app/package.json
+      - ./frontend/package-lock.json:/app/package-lock.json
+      # .next 不挂出来，容器内 Turbopack 自己管理
+    depends_on:
+      - backend

@@ -1,0 +1,40 @@
+# 生产模式 override
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+#
+# 和 dev 的差别：
+# - backend 走 prod target（源码 COPY 进镜像，多 worker、无 reload）
+# - frontend 走 prod target（next build + standalone + next start）
+# - 源码 bind mount 全部去掉，只保留数据卷
+# - build 时把 NEXT_PUBLIC_API_BASE 编译进前端（运行时再改要重 build）
+
+services:
+  backend:
+    build:
+      target: prod
+    image: handleexcel-backend:prod
+    volumes:
+      # dev override 的源码 bind mount 不继承到这里，只留数据 + docker.sock
+      - ./backend/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - python
+      - -m
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8002"
+      - --workers
+      - "2"
+
+  frontend:
+    build:
+      target: prod
+      args:
+        # build 阶段就要把这个注入，否则前端会把 fallback 值硬编译进去
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8002}
+    image: handleexcel-frontend:prod
+    volumes: []

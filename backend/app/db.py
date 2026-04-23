@@ -1,10 +1,9 @@
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Iterator
 
-DB_PATH = Path(__file__).resolve().parent.parent / "db.sqlite3"
+from .config import DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (

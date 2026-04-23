@@ -3,9 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-uploads/*
-outputs/*
-!uploads/.gitkeep
-!outputs/.gitkeep
-db.sqlite3
-db.sqlite3-*
+data/uploads/*
+data/outputs/*
+!data/uploads/.gitkeep
+!data/outputs/.gitkeep
+data/db.sqlite3
+data/db.sqlite3-*
+data/tmp/
