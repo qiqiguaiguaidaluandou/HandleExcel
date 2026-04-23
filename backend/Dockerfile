@@ -8,7 +8,10 @@ FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com \
+    PIP_DEFAULT_TIMEOUT=120
 
 # docker CLI 用来通过挂进来的 /var/run/docker.sock 起 executor 兄弟容器。
 # 只装 cli，不装 daemon；ca-certificates 是 openai 客户端调 HTTPS 需要的。
