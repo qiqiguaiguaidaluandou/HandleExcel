@@ -12,61 +12,57 @@
 
 ## 前置要求
 
-- Docker 20.10+（装了 docker 即可，daemon 跑起来）
-- Docker Compose v2（`docker compose` 命令可用）
+- Docker 20.10+，Docker Compose v2（`docker compose` 可用）
 
-## 启动
+## 部署
 
-### 1. 配置环境
+### 1. 配置部署地址
+
+项目根目录已有 `.env` 文件：
+
+```bash
+SERVER_HOST=172.10.42.142   # 服务器对外可访问的 IP（或域名）
+```
+
+docker compose 会自动读取它，拼出：
+
+- 前端 `NEXT_PUBLIC_API_BASE=http://172.10.42.142:8002`（build 时烘焙进前端 bundle）
+- 后端 `ALLOWED_ORIGINS=http://172.10.42.142:3001`（CORS 白名单）
+
+换服务器只改 `SERVER_HOST` 一行然后重 build 即可。
+
+### 2. 配置后端密钥
 
 ```bash
 cd backend
 cp .env.example .env
-# 编辑 .env，至少填入 DASHSCOPE_API_KEY；ALLOWED_ORIGINS 按需改
+# 编辑 .env：至少填 DASHSCOPE_API_KEY；ALLOWED_ORIGINS 不用改（会被 compose 覆盖）
 cd ..
 ```
 
-### 2. 构建 executor 镜像（一次性）
+### 3. 构建 executor 镜像（一次性）
 
 ```bash
 docker build -f docker/executor.Dockerfile -t handleexcel-executor:latest .
 ```
 
-这个镜像只装 pandas/numpy/openpyxl，不含网络工具，供每次 `/execute` 按需起一次性容器。
+这个镜像只装 pandas/numpy/openpyxl，不含网络工具，供每次 `/execute` 按需拉起一次性容器。
 
-### 3. 开发模式（边改边生效）
-
-```bash
-docker compose up
-```
-
-- 浏览器打开 http://localhost:3001
-- 后端源码改动自动 reload，前端 Turbopack 热更新
-- 数据持久化到 `backend/data/`（`uploads/`、`outputs/`、`db.sqlite3`）
-
-### 4. 生产模式（上线）
-
-浏览器访问的地址如果不是 `localhost`，需要在启动前设置前端里的 API 基址：
+### 4. 启动
 
 ```bash
-export NEXT_PUBLIC_API_BASE=http://<你的服务器IP或域名>:8002
-# 同时把这个地址加到 backend/.env 的 ALLOWED_ORIGINS
+docker compose up -d --build
 ```
 
-然后构建并启动：
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-```
-
-- 前端走 `next build` + standalone server，镜像小、首屏快
-- 后端无 reload、多 worker
-- 停服务：`docker compose -f docker-compose.yml -f docker-compose.prod.yml down`
-- 升级：`git pull && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+- 浏览器打开 `http://172.10.42.142:3001`
+- 查看日志：`docker compose logs -f`
+- 停服务：`docker compose down`
+- 升级：`git pull && docker compose up -d --build`
+- 换部署 IP：改根目录 `.env` 的 `SERVER_HOST`，然后 `docker compose up -d --build`（前端必须重 build，build arg 烘焙过）
 
 ### 5. 备份 / 恢复
 
-所有数据都在 `backend/data/` 下：
+所有数据在 `backend/data/` 下：
 
 ```bash
 # 备份
@@ -75,6 +71,24 @@ tar -czf backup-$(date +%F).tar.gz backend/data/
 # 恢复
 tar -xzf backup-YYYY-MM-DD.tar.gz
 ```
+
+---
+
+## 本地开发（不用 Docker）
+
+如果你想在本机边改边看效果（不经过镜像构建），仍然可以手动启动：
+
+```bash
+# 后端（已有 .venv 的话直接激活）
+cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+
+# 前端（另开一个终端）
+cd frontend && npm install && npm run dev
+```
+
+注意：`/api/execute` 依赖 `docker run` 子容器执行，所以宿主机需要装 Docker + 构建好 executor 镜像。`/api/analyze` 等其他接口不需要。
+
+---
 
 ## 流程
 
@@ -99,7 +113,7 @@ tar -xzf backup-YYYY-MM-DD.tar.gz
 
 ```
 backend/
-  Dockerfile                # multi-stage：dev + prod
+  Dockerfile                # 生产镜像
   app/
     main.py                 # FastAPI 入口
     llm.py                  # 百炼调用
@@ -117,7 +131,7 @@ backend/
   .env / .env.example
 
 frontend/
-  Dockerfile                # multi-stage：deps / dev / builder / prod
+  Dockerfile                # 生产镜像：deps → builder → runtime
   next.config.ts            # output: 'standalone'
   src/
     app/page.tsx            # 单页应用
@@ -127,8 +141,7 @@ frontend/
 docker/
   executor.Dockerfile       # 执行器镜像：仅 pandas/numpy/openpyxl
 
-docker-compose.yml          # dev（默认）
-docker-compose.prod.yml     # prod override
+docker-compose.yml          # 部署配置
 ```
 
 ## 历史迁移

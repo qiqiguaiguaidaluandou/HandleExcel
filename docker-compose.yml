@@ -1,21 +1,21 @@
-# 开发模式 compose（默认）
+# 部署用 compose（单文件）
 # 用法：
-#   docker compose up              # 前后端同时起，支持热更新
-#   docker compose up backend      # 只起后端
-#   docker compose down
+#   docker compose up -d --build          # 构建并后台启动
+#   docker compose logs -f                # 跟随日志
+#   docker compose down                   # 停服务
 #
-# 特点：
-# - 源码 bind mount 进容器，保存即热更新
-# - backend 挂宿主 docker.sock，用于每次 /execute 通过 `docker run` 起 executor 兄弟容器
-# - DATA_DIR 统一到 backend/data/，宿主和容器双向可见
+# 启动前：
+#   1. cd backend && cp .env.example .env，填好 DASHSCOPE_API_KEY
+#   2. 项目根 .env 里的 SERVER_HOST 指向本机真实可访问 IP（默认已是 172.10.42.142）
+#   3. 构建 executor 镜像（一次性）：
+#      docker build -f docker/executor.Dockerfile -t handleexcel-executor:latest .
 
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      target: dev
-    image: handleexcel-backend:dev
+    image: handleexcel-backend:latest
     container_name: handleexcel-backend
     restart: unless-stopped
     ports:
@@ -28,37 +28,23 @@ services:
       # 宿主视角的数据目录（executor 兄弟容器 -v 参数要用，docker daemon 解析的是宿主路径）
       HOST_DATA_DIR: ${PWD}/backend/data
       EXECUTOR_IMAGE: handleexcel-executor:latest
+      # CORS 白名单：由 SERVER_HOST 自动拼出前端地址；覆盖 backend/.env 里的同名项
+      ALLOWED_ORIGINS: http://${SERVER_HOST:-172.10.42.142}:3001
     volumes:
-      # 源码 bind mount（dev 热更新）
-      - ./backend/app:/app/app
-      - ./backend/migrate_paths.py:/app/migrate_paths.py:ro
-      # 数据持久化
       - ./backend/data:/data
-      # docker socket：后端用它起 executor 兄弟容器
       - /var/run/docker.sock:/var/run/docker.sock
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: dev
-    image: handleexcel-frontend:dev
+      args:
+        # NEXT_PUBLIC_* 必须 build 时注入，浏览器 bundle 里 API 基址就是这个
+        NEXT_PUBLIC_API_BASE: http://${SERVER_HOST:-172.10.42.142}:8002
+    image: handleexcel-frontend:latest
     container_name: handleexcel-frontend
     restart: unless-stopped
     ports:
       - "3001:3001"
-    environment:
-      # 浏览器里跑的代码直连后端，这里是浏览器视角（宿主）
-      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8002}
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
-      - ./frontend/next.config.ts:/app/next.config.ts
-      - ./frontend/tsconfig.json:/app/tsconfig.json
-      - ./frontend/eslint.config.mjs:/app/eslint.config.mjs
-      - ./frontend/postcss.config.mjs:/app/postcss.config.mjs
-      - ./frontend/package.json:/app/package.json
-      - ./frontend/package-lock.json:/app/package-lock.json
-      # .next 不挂出来，容器内 Turbopack 自己管理
     depends_on:
       - backend

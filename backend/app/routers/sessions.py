@@ -13,6 +13,21 @@ from ..excel_utils import inspect_file
 router = APIRouter(prefix="/api", tags=["sessions"])
 
 
+def _cleanup_uploads(paths: list[str]) -> None:
+    """删除已落盘但尚未被任何 job 引用的上传文件。
+
+    analyze 流程里，文件先落盘再调 inspect_file / LLM。中间任一步失败都会
+    让这些文件成为"孤儿"（DB 没记录，delete_job 永远追不上）。
+    所有提前 return 的错误分支都必须调这个。
+    """
+    for p in paths:
+        try:
+            Path(p).unlink(missing_ok=True)
+        except Exception:
+            # 清理失败不应掩盖原错误；孤儿顶多等定时清理
+            pass
+
+
 @router.post("/analyze")
 async def analyze(
     requirement: str = Form(...),
@@ -24,21 +39,27 @@ async def analyze(
     saved_paths: list[str] = []
     original_names: list[str] = []
     file_metas: list[dict] = []
-    for f in files:
-        suffix = Path(f.filename or "").suffix
-        if suffix.lower() not in {".xlsx", ".xls", ".xlsm", ".csv"}:
-            raise HTTPException(400, f"不支持的文件类型: {f.filename}")
-        content = await f.read()
-        dest = UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
-        dest.write_bytes(content)
-        saved_paths.append(str(dest))
-        original_names.append(f.filename or dest.name)
-        file_metas.append({"name": f.filename or dest.name, "size": len(content)})
+    try:
+        for f in files:
+            suffix = Path(f.filename or "").suffix
+            if suffix.lower() not in {".xlsx", ".xls", ".xlsm", ".csv"}:
+                raise HTTPException(400, f"不支持的文件类型: {f.filename}")
+            content = await f.read()
+            dest = UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
+            dest.write_bytes(content)
+            saved_paths.append(str(dest))
+            original_names.append(f.filename or dest.name)
+            file_metas.append({"name": f.filename or dest.name, "size": len(content)})
+    except Exception:
+        # 上传循环中途失败（后一个文件后缀非法 / IO 错）时，前面已落盘的要回收
+        _cleanup_uploads(saved_paths)
+        raise
 
     anonymize = os.getenv("ANONYMIZE_SAMPLES", "true").lower() not in {"0", "false", "no"}
     try:
         files_info = [inspect_file(p, anonymize=anonymize) for p in saved_paths]
     except Exception as e:
+        _cleanup_uploads(saved_paths)
         raise HTTPException(400, f"读取文件失败: {e}")
 
     for info, name in zip(files_info, original_names):
@@ -47,6 +68,7 @@ async def analyze(
     try:
         result = llm.generate_code(files_info, requirement)
     except Exception as e:
+        _cleanup_uploads(saved_paths)
         raise HTTPException(500, f"调用大模型失败: {e}")
 
     job = jobs.create(saved_paths, original_names, requirement)
