@@ -9,8 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_TRUSTED_HOST=mirrors.aliyun.com \
     PIP_DEFAULT_TIMEOUT=120
 
-# docker CLI 用来通过挂进来的 /var/run/docker.sock 起 executor 兄弟容器
-# 先把 Debian 软件源切到阿里云，避免国内从 deb.debian.org 拉 docker.io 超时
+# docker CLI 用来通过挂进来的 /var/run/docker.sock 起 executor 兄弟容器。
+# Debian 13 (trixie) 的 docker.io 包不再自带 /usr/bin/docker CLI，
+# 因此改用 Docker 官方仓库的 docker-ce-cli（通过阿里云镜像加速拉取）。
+# 只装 CLI，不装 daemon —— daemon 在宿主，走挂载的 socket。
 RUN set -eux \
     && if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
          sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources; \
@@ -21,7 +23,17 @@ RUN set -eux \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        docker.io \
+        curl \
+        gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/debian/gpg \
+         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && . /etc/os-release \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.aliyun.com/docker-ce/linux/debian ${VERSION_CODENAME} stable" \
+         > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
